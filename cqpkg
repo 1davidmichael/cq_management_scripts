@@ -1,0 +1,84 @@
+#!/bin/bash
+
+#set -x
+
+## FUNCTIONS
+error_message()
+  {
+    echo -e $1
+    #IFS=$SAVEIFS
+    exit 1
+  }
+
+#SAVEIFS=$IFS
+#IFS=$(echo -en "\n\b")
+
+if [ $# -lt 2 ]
+  then
+    error_message "Usage:\t`basename $0` target {list|install all|install package [packages...]}"
+fi
+
+## VARIABLES
+SCRIPTPATH=/usr/local/bin/jenkins
+PACKAGEPATH=/usr/local/bin/jenkins/cq-packages
+TARGET=$($SCRIPTPATH/cq-cred.sh $1) || error_message 'Invalid target'
+ACTION=$2
+shift; shift
+PACKAGES=$@
+CURLPARAMETERS='-sS'
+
+case $ACTION in
+	list)
+	if [[ $PACKAGES = '' ]]; then PACKAGES='all'; fi
+	;;
+	install)
+	if [[ $PACKAGES = '' ]]; then error_message "Expecting 'all' or list of packages to install"; fi
+	;;
+	*)
+	error_message 'Invalid action'
+	;;
+esac
+
+cd $PACKAGEPATH
+if [[ $PACKAGES = 'all' ]]
+then
+	PACKAGELOOP="$(ls $PACKAGEPATH)"
+else
+	PACKAGELOOP=$PACKAGES
+fi
+
+for t in $TARGET
+do
+	SERVERNAME=$(echo $t |awk -F'@' '{print $2;}')
+	echo $SERVERNAME
+	for i in $PACKAGELOOP
+	do
+		PKGNAME="${i/[0-9]_/}"
+		result=$(curl $CURLPARAMETERS $t/crx/packmgr/service.jsp?cmd=ls)
+		if [[ $result =~ ".*Unauthorized.*" ]]
+		then
+			echo "Incorrect username/password"
+			break
+		else
+			if [[ ! $result =~ $PKGNAME ]]
+			then
+				if [[ $ACTION = 'install' ]]
+				then
+					echo -n "Installing $i..."
+					result=$(curl $CURLPARAMETERS -F file=@"${i}" -F name="${PKGNAME}" -F force=true -F install=true $t/crx/packmgr/service.jsp)
+					if [[ ! $result =~ 'Package installed in' ]]; then error_message "Failed install: $result"; fi
+					#echo "$result"
+					echo "installation successful. Waiting for the dust to settle..."
+					sleep 5
+				else
+					echo "Needs installed: $i"
+				fi
+			else
+				echo "Already installed: $i"
+			fi
+		fi
+	done
+	echo
+done
+
+IFS=$SAVEIFS
